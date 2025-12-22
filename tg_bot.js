@@ -83,25 +83,29 @@ function formatStatus() {
   const mode = state?.mode || metrics?.mode || "unknown";
   const step = metrics?.step || state?.stepIndex || "--";
   const token = state?.tokenMint || "--";
-  const entryHigh = state?.entryHighScaled ? String(state.entryHighScaled) : "--";
   const avg = metrics?.avg || "--";
   const px = metrics?.px || "--";
+  const move = metrics?.move || "--";
   const tradePnl = metrics?.tradePnl || "--";
   const walletPnl = metrics?.walletPnl || "--";
   const solBal = metrics?.solBal || "--";
 
+  let tradePnlPct = "--";
+  if (metrics?.posSol && metrics?.tradePnl) {
+    const posSol = Number(metrics.posSol);
+    const tradePnlNum = Number(metrics.tradePnl);
+    if (Number.isFinite(posSol) && posSol !== 0 && Number.isFinite(tradePnlNum)) {
+      tradePnlPct = `${((tradePnlNum / posSol) * 100).toFixed(2)}%`;
+    }
+  }
+
   return [
-    "MM Profit Status",
-    `Mode: ${mode}`,
-    `Step: ${step}`,
+    "MM Profit Card",
+    `Mode: ${mode} | Step: ${step}`,
     `Token: ${token}`,
-    `Avg: ${avg}`,
-    `Px: ${px}`,
-    `Move: ${metrics?.move || "--"}`,
-    `Trade PnL: ${tradePnl}`,
-    `Wallet PnL: ${walletPnl}`,
-    `SOL Bal: ${solBal}`,
-    `Entry High: ${entryHigh}`,
+    `Avg: ${avg} | Px: ${px} | Move: ${move}`,
+    `Trade PnL: ${tradePnl} (${tradePnlPct})`,
+    `Wallet PnL: ${walletPnl} | SOL: ${solBal}`,
     `Last Trade PnL: ${lastTradePnl || "--"}`,
   ].join("\n");
 }
