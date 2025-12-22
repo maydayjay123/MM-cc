@@ -131,23 +131,21 @@ function formatStatus() {
   const targetBps = computeTargetBps(step);
   const tpPct = `${(targetBps / 100).toFixed(2)}%`;
 
+  const tokenShort =
+    token.length > 18 ? `${token.slice(0, 8)}…${token.slice(-6)}` : token;
+  const avgShort = avg === "--" ? "--" : Number(avg).toFixed(7);
+  const pxShort = px === "--" ? "--" : Number(px).toFixed(7);
+
   return [
-    "<b>MM Profit Card</b>",
-    "",
-    `Mode: <b>${escapeHtml(mode)}</b>`,
-    `Step: <b>${escapeHtml(step)}</b>   Trades: <b>${tradeCount}</b>`,
-    "",
-    `Token: <b>${escapeHtml(token)}</b>`,
-    `Avg: <b>${escapeHtml(avg)}</b>`,
-    `Px: <b>${escapeHtml(px)}</b>   Move: <b>${escapeHtml(move)}</b>`,
-    "",
-    `TP: <b>${tpPct}</b>   Trade PnL: <b>${escapeHtml(tradePnl)}</b> (${tradePnlPct})`,
-    `Trailing: <b>${trailStart.toFixed(2)}%</b> start / <b>${trailGap.toFixed(2)}%</b> gap` +
-      `${trailPeak !== null ? ` / peak <b>${trailPeak.toFixed(2)}%</b>` : ""}`,
-    "",
-    `Wallet PnL: <b>${formatSol(walletPnl)}</b>`,
-    `SOL: <b>${formatSol(solBal)}</b>`,
-    `Last Trade PnL: <b>${formatSol(lastTradePnl || "--")}</b>`,
+    "<b>MM Profit</b>",
+    `Mode: <b>${escapeHtml(mode)}</b> | Step: <b>${escapeHtml(step)}</b> | Trades: <b>${tradeCount}</b>`,
+    `Token: <b>${escapeHtml(tokenShort)}</b>`,
+    `Avg: <b>${avgShort}</b> | Px: <b>${pxShort}</b> | Move: <b>${escapeHtml(move)}</b>`,
+    `TP: <b>${tpPct}</b> | PnL: <b>${escapeHtml(tradePnl)}</b> (${tradePnlPct})`,
+    `Trail: <b>${trailStart.toFixed(1)}%</b>/<b>${trailGap.toFixed(1)}%</b>` +
+      `${trailPeak !== null ? ` | Peak <b>${trailPeak.toFixed(2)}%</b>` : ""}`,
+    `Wallet: <b>${formatSol(walletPnl)}</b> | SOL: <b>${formatSol(solBal)}</b>`,
+    `Last: <b>${formatSol(lastTradePnl || "--")}</b>`,
   ].join("\n");
 }
 
