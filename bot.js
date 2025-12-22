@@ -366,12 +366,12 @@ async function main() {
   const keypair = keypairFromEntry(wallets[0]);
   const connection = new Connection(RPC_URL, "confirmed");
 
-  const prompt = createPrompt();
-  const tokenMint = await prompt.ask(
-    "Target token mint",
-    process.env.TARGET_MINT || ""
-  );
-  prompt.close();
+  let tokenMint = process.env.TARGET_MINT || "";
+  if (!tokenMint) {
+    const prompt = createPrompt();
+    tokenMint = await prompt.ask("Target token mint", "");
+    prompt.close();
+  }
 
   if (!tokenMint) {
     console.error("Target token mint is required.");
