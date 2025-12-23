@@ -35,6 +35,7 @@ const DEFAULT_CONFIRM_TIMEOUT_MS = 120000;
 const DEFAULT_PROFIT_CONFIRM_TICKS = 2;
 const DEFAULT_TRAIL_START_PCT = 8;
 const DEFAULT_TRAIL_GAP_PCT = 4;
+const DEFAULT_TRAIL_MIN_PROFIT_PCT = 3;
 const PRICE_SCALE = 1_000_000_000n;
 
 function loadWallets() {
@@ -436,6 +437,13 @@ async function main() {
   const trailGapBps = BigInt(
     Math.round(
       Number(process.env.TRAILING_GAP_PCT || DEFAULT_TRAIL_GAP_PCT) * 100
+    )
+  );
+  const trailMinProfitBps = BigInt(
+    Math.round(
+      Number(
+        process.env.TRAILING_MIN_PROFIT_PCT || DEFAULT_TRAIL_MIN_PROFIT_PCT
+      ) * 100
     )
   );
 
@@ -1024,7 +1032,7 @@ async function main() {
         writeState(state);
       }
       const trailStopBps = BigInt(state.trailPeakBps) - trailGapBps;
-      if (profitBps <= trailStopBps) {
+      if (profitBps <= trailStopBps && profitBps >= trailMinProfitBps) {
         await doSell("trailing stop hit", currentPriceScaled, sellSlippageBps);
         continue;
       }
