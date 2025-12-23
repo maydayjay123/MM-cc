@@ -1036,6 +1036,15 @@ async function main() {
         await doSell("trailing stop hit", currentPriceScaled, sellSlippageBps);
         continue;
       }
+      console.log(
+        `${ts()} | TRAIL check | profit ${formatPctFromBps(
+          profitBps
+        )} | peak ${formatPctFromBps(
+          BigInt(state.trailPeakBps)
+        )} | stop ${formatPctFromBps(trailStopBps)} | min ${formatPctFromBps(
+          trailMinProfitBps
+        )}`
+      );
     }
 
     if (state.profitStreak >= profitConfirmTicks) {
