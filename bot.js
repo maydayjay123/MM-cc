@@ -989,7 +989,9 @@ async function main() {
     }
 
     if (state.stepIndex < stepSol.length) {
-      const triggerBps = BigInt(stepDrawdown[state.stepIndex] * 100);
+      const triggerBps = BigInt(
+        Math.round(stepDrawdown[state.stepIndex] * 100)
+      );
       if (drawdownBps >= triggerBps) {
         const bought = await doBuy(state.stepIndex);
         await new Promise((resolve) => setTimeout(resolve, pollMs));
