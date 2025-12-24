@@ -161,7 +161,7 @@ function formatStatus() {
       ? `${sessionPct.toFixed(2)}%`
       : "--";
 
-  const lines = [
+  const sheetLines = [
     "MM PROFIT :: STATUS",
     "--------------------",
     `MODE     : ${mode}`,
@@ -186,11 +186,11 @@ function formatStatus() {
     `LAST PNL : ${formatSol(lastTradePnl || "--")} SOL`,
   ];
 
-  const width = Math.max(...lines.map((line) => line.length));
+  const width = Math.max(...sheetLines.map((line) => line.length));
   const border = `+${"-".repeat(width + 2)}+`;
   const boxed = [
     border,
-    ...lines.map((line) => `| ${line.padEnd(width)} |`),
+    ...sheetLines.map((line) => `| ${line.padEnd(width)} |`),
     border,
   ].join("\n");
   return `<pre>${escapeHtml(boxed)}</pre>`;
