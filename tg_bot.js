@@ -9,6 +9,12 @@ const STATE_PATH = process.env.STATE_PATH || path.join(__dirname, "bot_state.jso
 const LOG_PATH = process.env.LOG_PATH || path.join(__dirname, "bot.log");
 const COMMANDS_PATH =
   process.env.TG_COMMANDS_PATH || path.join(__dirname, "tg_commands.jsonl");
+const ALERT_STATE_PATH =
+  process.env.TG_ALERT_STATE_PATH || path.join(__dirname, "tg_alert.json");
+
+const DEFAULT_ALERT_MOVE_PCT = Number(process.env.ALERT_MOVE_PCT || 2);
+const DEFAULT_ALERT_WINDOW_SEC = Number(process.env.ALERT_WINDOW_SEC || 30);
+const DEFAULT_ALERT_COOLDOWN_SEC = Number(process.env.ALERT_COOLDOWN_SEC || 300);
 
 if (!BOT_TOKEN || !CHAT_ID) {
   console.error("Missing TG_BOT_TOKEN or TG_CHAT_ID in .env");
@@ -17,6 +23,36 @@ if (!BOT_TOKEN || !CHAT_ID) {
 
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 let updateOffset = 0;
+let alertConfig = {
+  movePct: DEFAULT_ALERT_MOVE_PCT,
+  windowSec: DEFAULT_ALERT_WINDOW_SEC,
+  cooldownSec: DEFAULT_ALERT_COOLDOWN_SEC,
+};
+let alertSamples = [];
+let lastAlertAt = 0;
+
+function readAlertConfig() {
+  try {
+    if (!fs.existsSync(ALERT_STATE_PATH)) return;
+    const raw = fs.readFileSync(ALERT_STATE_PATH, "utf8");
+    if (!raw.trim()) return;
+    const data = JSON.parse(raw);
+    if (typeof data.movePct === "number") alertConfig.movePct = data.movePct;
+    if (typeof data.windowSec === "number") alertConfig.windowSec = data.windowSec;
+    if (typeof data.cooldownSec === "number")
+      alertConfig.cooldownSec = data.cooldownSec;
+  } catch (err) {
+    console.error("Alert config read failed:", err.message || err);
+  }
+}
+
+function writeAlertConfig() {
+  try {
+    fs.writeFileSync(ALERT_STATE_PATH, JSON.stringify(alertConfig), "utf8");
+  } catch (err) {
+    console.error("Alert config write failed:", err.message || err);
+  }
+}
 
 function readState() {
   try {
@@ -55,6 +91,20 @@ function parseTableRow(line) {
     walletPnl: parts[8],
     solBal: parts[9],
   };
+}
+
+function parseMovePct(move) {
+  const match = String(move || "").match(/-?\\d+(?:\\.\\d+)?/);
+  if (!match) return null;
+  const value = Number(match[0]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseLogTime(value) {
+  const stamp = String(value || "").replace(" ", "T");
+  const parsed = new Date(stamp);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.getTime();
 }
 
 function findLatestMetrics(lines) {
@@ -257,6 +307,22 @@ async function sendMessage(text) {
   }
 }
 
+async function sendAlert(text) {
+  const res = await fetch(`${API_BASE}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: CHAT_ID,
+      text,
+      parse_mode: "HTML",
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`sendMessage failed: ${res.status} ${body}`);
+  }
+}
+
 async function getUpdates() {
   const url = new URL(`${API_BASE}/getUpdates`);
   url.searchParams.set("timeout", "30");
@@ -268,6 +334,40 @@ async function getUpdates() {
   }
   const data = await res.json();
   return data.result || [];
+}
+
+async function checkMoveAlert() {
+  const lines = readLogLines();
+  const metrics = findLatestMetrics(lines);
+  if (!metrics) return;
+  const movePct = parseMovePct(metrics.move);
+  if (movePct === null) return;
+  const timeMs = parseLogTime(metrics.time) || Date.now();
+
+  alertSamples.push({ ts: timeMs, movePct });
+  const windowMs = alertConfig.windowSec * 1000;
+  alertSamples = alertSamples.filter((s) => timeMs - s.ts <= windowMs);
+  if (alertSamples.length < 2) return;
+
+  let min = alertSamples[0].movePct;
+  let max = alertSamples[0].movePct;
+  for (const sample of alertSamples) {
+    min = Math.min(min, sample.movePct);
+    max = Math.max(max, sample.movePct);
+  }
+
+  const delta = max - min;
+  const now = Date.now();
+  if (delta < alertConfig.movePct) return;
+  if (now - lastAlertAt < alertConfig.cooldownSec * 1000) return;
+  lastAlertAt = now;
+
+  const oldest = alertSamples[0];
+  const direction = movePct >= oldest.movePct ? "up" : "down";
+  await sendAlert(
+    `📈 <b>MOVE spike</b> ${direction} | Δ ${delta.toFixed(2)}% in ${alertConfig.windowSec}s\\n` +
+      `Current MOVE: <b>${movePct.toFixed(2)}%</b>`
+  );
 }
 
 async function answerCallbackQuery(callbackId, text) {
@@ -300,6 +400,30 @@ async function pollLoop() {
         if (chatId !== String(CHAT_ID)) continue;
         if (message.startsWith("/status")) {
           await sendMessage(formatStatus());
+        } else if (message.startsWith("/setalert")) {
+          const parts = message.trim().split(/\\s+/);
+          const pct = Number(parts[1]);
+          const windowSec = Number(parts[2]);
+          const cooldownSec = Number(parts[3]);
+          if (
+            Number.isFinite(pct) &&
+            Number.isFinite(windowSec) &&
+            Number.isFinite(cooldownSec)
+          ) {
+            alertConfig = { movePct: pct, windowSec, cooldownSec };
+            writeAlertConfig();
+            await sendMessage(
+              `<b>Alert updated</b>\\nMOVE Δ ${pct}% in ${windowSec}s\\nCooldown ${cooldownSec}s`
+            );
+          } else {
+            await sendMessage(
+              "<b>Usage</b>: /setalert &lt;movePct&gt; &lt;windowSec&gt; &lt;cooldownSec&gt;\\nExample: /setalert 2 30 300"
+            );
+          }
+        } else if (message.startsWith("/alert")) {
+          await sendMessage(
+            `<b>Alert</b>\\nMOVE Δ ${alertConfig.movePct}% in ${alertConfig.windowSec}s\\nCooldown ${alertConfig.cooldownSec}s`
+          );
         }
       }
 
@@ -320,4 +444,10 @@ async function pollLoop() {
 }
 
 console.log("Telegram bot running. Commands: /status");
+readAlertConfig();
+setInterval(() => {
+  checkMoveAlert().catch((err) => {
+    console.error("Alert check failed:", err.message || err);
+  });
+}, 5000);
 pollLoop();
