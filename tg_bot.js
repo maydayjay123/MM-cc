@@ -186,8 +186,6 @@ function formatStatus() {
     `TRAIL    : ${trailStart.toFixed(1)}%/${trailGap.toFixed(1)}%` +
       `${trailPeak !== null ? `  PEAK ${trailPeak.toFixed(2)}%` : ""}`,
     "",
-    `TRADE PNL: ${tradePnl} (${tradePnlPct})`,
-    "",
     `SESSION  : ${sessionStartText} -> ${sessionNowText} SOL`,
     `SESSION$ : ${sessionPnlText} (${sessionPctText})`,
     "",
@@ -196,18 +194,24 @@ function formatStatus() {
     `LAST PNL : ${formatSol(lastTradePnl || "--")} SOL`,
   ];
 
+  const innerPad = 1;
+  const gap = "  ";
   const liveWidth = liveBox[0].length;
   const baseWidth = Math.max(...sheetLines.map((line) => line.length));
-  const width = Math.max(baseWidth, liveWidth + 2);
-  const border = `+${"-".repeat(width + 2)}+`;
+  const leftBlockWidth = baseWidth + innerPad * 2;
+  const totalWidth = Math.max(leftBlockWidth + gap.length + liveWidth, leftBlockWidth);
+  const border = `+${"-".repeat(totalWidth + 2)}+`;
+
+  const liveRowStart = 2;
   const boxLines = sheetLines.map((line, idx) => {
-    const liveIdx = idx - 1;
-    if (liveIdx >= 0 && liveIdx < liveBox.length) {
-      const leftWidth = width - liveWidth - 1;
-      const left = line.padEnd(leftWidth);
-      return `| ${left} ${liveBox[liveIdx]}|`;
-    }
-    return `| ${line.padEnd(width)} |`;
+    const liveIdx = idx - liveRowStart;
+    const left = " ".repeat(innerPad) + line.padEnd(baseWidth) + " ".repeat(innerPad);
+    const right =
+      liveIdx >= 0 && liveIdx < liveBox.length
+        ? gap + liveBox[liveIdx]
+        : " ".repeat(gap.length + liveWidth);
+    const content = (left + right).padEnd(totalWidth);
+    return `| ${content} |`;
   });
   const boxed = [border, ...boxLines, border].join("\n");
   return `<pre>${escapeHtml(boxed)}</pre>`;
