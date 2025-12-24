@@ -29,6 +29,8 @@ const DEFAULT_BUY_SLIPPAGE_STEP_BPS = 25;
 const DEFAULT_BUY_SLIPPAGE_CAP_BPS = 500;
 const DEFAULT_SELL_PRIORITY_FEE_LAMPORTS = 0;
 const DEFAULT_BUY_PRIORITY_FEE_LAMPORTS = 0;
+const DEFAULT_SELL_PRIORITY_FEE_STEP_LAMPORTS = 2000;
+const DEFAULT_SELL_PRIORITY_FEE_CAP_LAMPORTS = 20000;
 const DEFAULT_SELL_SLIPPAGE_STEP_BPS = 25;
 const DEFAULT_SELL_SLIPPAGE_CAP_BPS = 500;
 const DEFAULT_CONFIRM_TIMEOUT_MS = 120000;
@@ -415,6 +417,14 @@ async function main() {
   const sellPriorityFeeLamports = BigInt(
     process.env.SELL_PRIORITY_FEE_LAMPORTS || DEFAULT_SELL_PRIORITY_FEE_LAMPORTS
   );
+  const sellPriorityFeeStepLamports = BigInt(
+    process.env.SELL_PRIORITY_FEE_STEP_LAMPORTS ||
+      DEFAULT_SELL_PRIORITY_FEE_STEP_LAMPORTS
+  );
+  const sellPriorityFeeCapLamports = BigInt(
+    process.env.SELL_PRIORITY_FEE_CAP_LAMPORTS ||
+      DEFAULT_SELL_PRIORITY_FEE_CAP_LAMPORTS
+  );
   const buyPriorityFeeLamports = BigInt(
     process.env.BUY_PRIORITY_FEE_LAMPORTS || DEFAULT_BUY_PRIORITY_FEE_LAMPORTS
   );
@@ -478,6 +488,9 @@ async function main() {
   }
   if (!state.sellSlippageBps) {
     state.sellSlippageBps = null;
+  }
+  if (!state.sellPriorityFeeLamports) {
+    state.sellPriorityFeeLamports = null;
   }
   if (!state.profitStreak) {
     state.profitStreak = 0;
@@ -686,8 +699,11 @@ async function main() {
     const beforeSol = BigInt(
       await connection.getBalance(keypair.publicKey, "confirmed")
     );
+    const effectiveSellPriorityFeeLamports = state.sellPriorityFeeLamports
+      ? BigInt(state.sellPriorityFeeLamports)
+      : sellPriorityFeeLamports;
     console.log(
-      `${ts()} | SELL start | reason ${reason} | tokens ${beforeTokens.toString()} | slippage ${slippageOverrideBps ?? "auto"} bps | priority ${sellPriorityFeeLamports.toString()}`
+      `${ts()} | SELL start | reason ${reason} | tokens ${beforeTokens.toString()} | slippage ${slippageOverrideBps ?? "auto"} bps | priority ${effectiveSellPriorityFeeLamports.toString()}`
     );
     const effectiveSellSlippageBps = state.sellSlippageBps
       ? Number(state.sellSlippageBps)
@@ -705,9 +721,9 @@ async function main() {
     console.log(
       `${ts()} | SELL quote | in ${tokenAmount.toString()} | out ${quote.outAmount} | priceImpact ${quote.priceImpactPct ?? "n/a"}`
     );
-    if (sellPriorityFeeLamports > 0n) {
+    if (effectiveSellPriorityFeeLamports > 0n) {
       quote._swapOptions = {
-        prioritizationFeeLamports: Number(sellPriorityFeeLamports),
+        prioritizationFeeLamports: Number(effectiveSellPriorityFeeLamports),
       };
     }
     let result;
@@ -724,6 +740,14 @@ async function main() {
         sellSlippageCapBps
       );
       state.sellSlippageBps = nextBps;
+      if (sellPriorityFeeCapLamports > 0n) {
+        const nextPriority =
+          effectiveSellPriorityFeeLamports + sellPriorityFeeStepLamports;
+        state.sellPriorityFeeLamports =
+          nextPriority > sellPriorityFeeCapLamports
+            ? sellPriorityFeeCapLamports.toString()
+            : nextPriority.toString();
+      }
       writeState(state);
       return false;
     }
@@ -780,6 +804,7 @@ async function main() {
     state.mode = "waiting_entry";
     state.referencePriceScaled = currentPriceScaled.toString();
     state.sellSlippageBps = sellSlippageBps;
+    state.sellPriorityFeeLamports = null;
     state.trailPeakBps = null;
     stepLamports = computeStepLamports(afterSol);
     writeState(state);
@@ -1011,7 +1036,10 @@ async function main() {
       sellSlippageBps
     );
     const estSolOut = BigInt(sellQuote.outAmount);
-    const priorityCost = sellPriorityFeeLamports;
+    const effectiveSellPriorityFeeLamports = state.sellPriorityFeeLamports
+      ? BigInt(state.sellPriorityFeeLamports)
+      : sellPriorityFeeLamports;
+    const priorityCost = effectiveSellPriorityFeeLamports;
     const profitBps = computeBps(
       estSolOut - totalSolSpent - priorityCost,
       totalSolSpent
