@@ -161,6 +161,14 @@ function formatStatus() {
       ? `${sessionPct.toFixed(2)}%`
       : "--";
 
+  const livePnlLine = `${tradePnl} (${tradePnlPct})`;
+  const liveBox = [
+    "+-----------+",
+    "| LIVE      |",
+    `| PNL ${livePnlLine.padEnd(7)}|`,
+    "+-----------+",
+  ];
+
   const sheetLines = [
     "MM PROFIT :: STATUS",
     "--------------------",
@@ -188,11 +196,20 @@ function formatStatus() {
 
   const width = Math.max(...sheetLines.map((line) => line.length));
   const border = `+${"-".repeat(width + 2)}+`;
-  const boxed = [
+  const boxedLines = [
     border,
     ...sheetLines.map((line) => `| ${line.padEnd(width)} |`),
     border,
-  ].join("\n");
+  ];
+
+  const paddedBox = boxedLines.map((line, idx) => {
+    const overlay = liveBox[idx - 1] || " ".repeat(liveBox[0].length);
+    if (idx === 0 || idx === boxedLines.length - 1) {
+      return `${line}  ${" ".repeat(liveBox[0].length)}`;
+    }
+    return `${line}  ${overlay}`;
+  });
+  const boxed = paddedBox.join("\n");
   return `<pre>${escapeHtml(boxed)}</pre>`;
 }
 
