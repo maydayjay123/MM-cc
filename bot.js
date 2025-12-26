@@ -398,6 +398,8 @@ async function main() {
   const hardStopBps = BigInt(
     Number(process.env.HARD_STOP_BPS || DEFAULT_HARD_STOP_BPS)
   );
+  const hardStopEnabled = hardStopBps < 0n;
+  const hardStopAbs = hardStopEnabled ? -hardStopBps : 0n;
   const pollMs = Number(process.env.POLL_MS || DEFAULT_POLL_MS);
   const priceSampleSol = Number(
     process.env.PRICE_SAMPLE_SOL || DEFAULT_PRICE_SAMPLE_SOL
@@ -459,6 +461,12 @@ async function main() {
       ) * 100
     )
   );
+
+  if (!hardStopEnabled) {
+    console.log(
+      `${ts()} | HARD STOP disabled (HARD_STOP_BPS=${hardStopBps.toString()})`
+    );
+  }
 
   let state = readState();
   if (!state || state.tokenMint !== tokenMint) {
@@ -1153,7 +1161,7 @@ async function main() {
       continue;
     }
 
-    if (drawdownBps >= BigInt(Math.abs(Number(hardStopBps)))) {
+    if (hardStopEnabled && drawdownBps >= hardStopAbs) {
       await doSell("hard stop hit", currentPriceScaled);
       continue;
     }
