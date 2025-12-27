@@ -86,6 +86,20 @@ function parseTableRow(line) {
   const mode = parts[1];
   if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(time)) return null;
   if (mode !== "WAIT" && mode !== "POS") return null;
+  if (parts.length >= 11) {
+    return {
+      time: parts[0],
+      mode: parts[1],
+      step: parts[2],
+      avg: parts[3],
+      px: parts[4],
+      move: parts[5],
+      posSol: parts[7],
+      tradePnl: parts[8],
+      walletPnl: parts[9],
+      solBal: parts[10],
+    };
+  }
   return {
     time: parts[0],
     mode: parts[1],
