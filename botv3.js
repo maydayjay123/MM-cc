@@ -11,6 +11,10 @@ const {
 } = require("@solana/web3.js");
 
 const RPC_URL = process.env.SOLANA_RPC_URL;
+const WALLET_INDEX_RAW = process.env.WALLET_INDEX;
+const WALLET_INDEX = Number.isFinite(Number(WALLET_INDEX_RAW))
+  ? Number(WALLET_INDEX_RAW)
+  : null;
 const RPC_URLS = (process.env.SOLANA_RPC_URLS || process.env.RPC_URLS || "")
   .split(",")
   .map((item) => item.trim())
@@ -18,9 +22,17 @@ const RPC_URLS = (process.env.SOLANA_RPC_URLS || process.env.RPC_URLS || "")
 const WALLETS_FILE =
   process.env.WALLETS_FILE || path.join(__dirname, "wallets.json");
 const STATE_FILE =
-  process.env.BOTV3_STATE_PATH || path.join(__dirname, "botv3_state.json");
+  process.env.BOTV3_STATE_PATH ||
+  path.join(
+    __dirname,
+    WALLET_INDEX !== null ? `botv3_state_${WALLET_INDEX}.json` : "botv3_state.json"
+  );
 const COMMANDS_PATH =
-  process.env.TG_COMMANDS_PATH || path.join(__dirname, "tg_commands.jsonl");
+  process.env.TG_COMMANDS_PATH ||
+  path.join(
+    __dirname,
+    WALLET_INDEX !== null ? `tg_commands_${WALLET_INDEX}.jsonl` : "tg_commands.jsonl"
+  );
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const JUP_BASE_URL = process.env.JUPITER_API_BASE || "https://quote-api.jup.ag";
 
@@ -51,7 +63,11 @@ const DEFAULT_TRAIL_MIN_PROFIT_PCT = 3;
 const DEFAULT_SELL_PNL_LOG = "sell_pnl.log";
 const PRICE_SCALE = 1_000_000_000n;
 const LOG_FILE =
-  process.env.BOT_LOG_PATH || path.join(__dirname, "botv3.log");
+  process.env.BOT_LOG_PATH ||
+  path.join(
+    __dirname,
+    WALLET_INDEX !== null ? `botv3_${WALLET_INDEX}.log` : "botv3.log"
+  );
 const LOG_TO_CONSOLE = process.env.LOG_TO_CONSOLE !== "false";
 
 function loadWalletFile() {
@@ -319,6 +335,11 @@ function buildRpcUrls() {
     list.push(publicRpc);
   }
   return list;
+}
+
+function isRateLimitError(err) {
+  const message = String(err?.message || err || "");
+  return message.includes("429") || message.includes("Too Many Requests");
 }
 
 console.log = (...args) => {
@@ -679,10 +700,22 @@ async function main() {
     logError("No wallets found. Run swap.js once to create a wallet.");
     process.exit(1);
   }
-  let keypair = keypairFromEntry(wallets[0]);
+  if (WALLET_INDEX !== null) {
+    if (WALLET_INDEX < 0 || WALLET_INDEX >= wallets.length) {
+      logError("WALLET_INDEX out of range.", { index: WALLET_INDEX });
+      process.exit(1);
+    }
+  }
+  let keypair = keypairFromEntry(
+    wallets[WALLET_INDEX !== null ? WALLET_INDEX : 0]
+  );
   let rpcIndex = 0;
   let connection = new Connection(rpcUrls[rpcIndex], "confirmed");
-  logInfo("CONFIG rpc", { urls: rpcUrls.join(","), active: rpcUrls[0] });
+  logInfo("CONFIG rpc", {
+    urls: rpcUrls.join(","),
+    active: rpcUrls[0],
+    walletIndex: WALLET_INDEX !== null ? WALLET_INDEX : "auto",
+  });
 
   let tokenMint = process.env.TARGET_MINT || "";
   if (!tokenMint) {
@@ -826,6 +859,9 @@ async function main() {
   }
   ensureSettings(state);
   ensureStats(state);
+  if (WALLET_INDEX !== null) {
+    state.activeWalletIndex = WALLET_INDEX;
+  }
   if (state.activeWalletIndex < 0 || state.activeWalletIndex >= wallets.length) {
     state.activeWalletIndex = 0;
   }
@@ -943,6 +979,12 @@ async function main() {
       case "wallet":
       case "wallet_select":
       case "walletswitch": {
+        if (WALLET_INDEX !== null) {
+          logWarn("CMD wallet select ignored: locked wallet index", {
+            index: WALLET_INDEX,
+          });
+          break;
+        }
         const index = Number(args[0]);
         if (Number.isFinite(index) && index >= 0 && index < wallets.length) {
           state.activeWalletIndex = index;
@@ -958,6 +1000,12 @@ async function main() {
       }
       case "wallet_new":
       case "walletnew": {
+        if (WALLET_INDEX !== null) {
+          logWarn("CMD wallet new ignored: locked wallet index", {
+            index: WALLET_INDEX,
+          });
+          break;
+        }
         const created = createWallet(walletFile);
         walletFile = loadWalletFile();
         wallets = walletFile.wallets;
@@ -1273,14 +1321,45 @@ async function main() {
 
   async function doDegenBuy() {
     const degenSol = Number(state.settings.degenBuySol);
-    if (!Number.isFinite(degenSol) || degenSol <= 0) {
-      logWarn("DEGEN buy blocked: invalid amount", {
-        sol: state.settings.degenBuySol,
-      });
-      return false;
+    const balanceLamports = BigInt(
+      await connection.getBalance(keypair.publicKey, "confirmed")
+    );
+    const walletUsePct = Number(state.settings.walletUsePct);
+    const stepSizePct = normalizeStepSizePct(state.settings.stepSizePct || []);
+    let lamportsOverride = null;
+
+    if (stepSizePct && walletUsePct > 0) {
+      const allocLamports =
+        (balanceLamports * BigInt(Math.round(walletUsePct * 100))) / 10000n;
+      const stepPct =
+        stepSizePct[state.stepIndex] ?? stepSizePct[0] ?? 100;
+      lamportsOverride =
+        (allocLamports * BigInt(Math.round(stepPct * 100))) / 10000n;
     }
+
+    if (lamportsOverride === null) {
+      if (!Number.isFinite(degenSol) || degenSol <= 0) {
+        logWarn("DEGEN buy blocked: invalid amount", {
+          sol: state.settings.degenBuySol,
+        });
+        return false;
+      }
+      lamportsOverride = lamportsFromSol(degenSol);
+    } else if (Number.isFinite(degenSol) && degenSol > 0) {
+      const capLamports = lamportsFromSol(degenSol);
+      if (capLamports < lamportsOverride) {
+        lamportsOverride = capLamports;
+      }
+    }
+
+    logInfo("DEGEN size", {
+      lamports: lamportsOverride.toString(),
+      sol: formatSolFromLamports(lamportsOverride),
+      walletUsePct,
+    });
+
     return doBuy(state.stepIndex, false, {
-      lamportsOverride: lamportsFromSol(degenSol),
+      lamportsOverride,
       label: "DEGEN",
       incrementStep: false,
     });
@@ -1458,10 +1537,6 @@ async function main() {
 
   while (true) {
     try {
-    if (rpcUrls.length > 1) {
-      rotateConnection();
-    }
-
     const commandRead = readCommandEntries(state.lastCommandLine);
     let forceBuy = false;
     let forceSell = false;
@@ -1884,7 +1959,16 @@ async function main() {
 
     await new Promise((resolve) => setTimeout(resolve, pollMs));
     } catch (err) {
-      logError("Loop error", { error: err.message || err });
+      const errorMsg = err.message || err;
+      if (isRateLimitError(err) && rpcUrls.length > 1) {
+        const prev = rpcUrls[rpcIndex];
+        rotateConnection();
+        logWarn("RPC rate limit: rotating connection", {
+          from: prev,
+          to: rpcUrls[rpcIndex],
+        });
+      }
+      logError("Loop error", { error: errorMsg });
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
   }
