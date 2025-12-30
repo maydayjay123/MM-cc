@@ -44,7 +44,6 @@ const lastPanelMessageIds = {
   lab: null,
   stats: null,
   wallet: null,
-  menu: null,
 };
 let alertConfig = {
   movePct: DEFAULT_ALERT_MOVE_PCT,
@@ -344,13 +343,19 @@ function formatStatus(index) {
       ? state.settings.stepSizePct.map((v) => `${v}%`).join(",")
       : formatStepPlan();
 
+  const activeFlag =
+    typeof state?.activeWalletIndex === "number" &&
+    state.activeWalletIndex === index
+      ? "ACTIVE"
+      : "INACTIVE";
+
   const sheetLines = [
     "MM PROFIT :: STATUS",
     "--------------------",
     `MODE     : ${mode}`,
     `STEP     : ${step}   TRADES: ${tradeCount}`,
     `TOKEN    : ${tokenShort}`,
-    `WALLET   : ${walletIndex} ${walletShort}`,
+    `WALLET   : ${walletIndex} ${walletShort} (${activeFlag})`,
     `ADDRESS  : ${walletPubkey}`,
     `STEPS    : ${stepPlan}`,
     "",
@@ -483,35 +488,6 @@ function getWalletBalanceLine(index) {
   return sol;
 }
 
-function formatWalletMenu(index) {
-  const wallets = readWallets();
-  if (!wallets.length) {
-    return `<pre>${escapeHtml("No wallets found.")}</pre>`;
-  }
-  const lines = ["MM PROFIT :: WALLETS", "-------------------"];
-  wallets.forEach((wallet, idx) => {
-    const short =
-      wallet.publicKey.length > 16
-        ? `${wallet.publicKey.slice(0, 6)}...${wallet.publicKey.slice(-6)}`
-        : wallet.publicKey;
-    const sol = getWalletBalanceLine(idx);
-    const active = idx === index ? "*" : " ";
-    lines.push(`${active} ${idx}: ${short} | ${sol} SOL`);
-  });
-  lines.push("");
-  lines.push("Use Wallet Prev/Next to switch.");
-
-  const innerPad = 1;
-  const baseWidth = Math.max(...lines.map((line) => line.length));
-  const totalWidth = baseWidth + innerPad * 2;
-  const border = `+${"-".repeat(totalWidth + 2)}+`;
-  const boxLines = lines.map((line) => {
-    const content = " ".repeat(innerPad) + line.padEnd(baseWidth) + " ".repeat(innerPad);
-    return `| ${content} |`;
-  });
-  return `<pre>${escapeHtml([border, ...boxLines, border].join("\n"))}</pre>`;
-}
-
 function appendCommand(action) {
   const payload = {
     ts: new Date().toISOString(),
@@ -557,8 +533,8 @@ async function sendMessage(text) {
             { text: "Wallet Next", callback_data: "wallet_next" },
           ],
           [
-            { text: "Wallet Card", callback_data: "wallet_status" },
-            { text: "Wallets", callback_data: "wallet_menu" },
+            { text: "Wallet", callback_data: "wallet_status" },
+            { text: "Select", callback_data: "wallet_select" },
           ],
         ],
       },
@@ -714,11 +690,6 @@ async function pollLoop() {
           if (update.message?.message_id) {
             deleteMessage(chatId, update.message.message_id).catch(() => {});
           }
-        } else if (message.startsWith("/wallets")) {
-          await sendPanel(chatId, "menu", formatWalletMenu(walletViewIndex));
-          if (update.message?.message_id) {
-            deleteMessage(chatId, update.message.message_id).catch(() => {});
-          }
         } else if (/^\/(minTP|walletUSE|setDEGEN|buyDUMP|stepSIZE|step|setCA)\b/i.test(message)) {
           const cleaned = message.replace(/^\//, "");
           const msgId = await sendMessage(queueCommand(cleaned));
@@ -778,9 +749,6 @@ async function pollLoop() {
           } else if (action === "stats_status") {
             await sendPanel(callbackChatId, "stats", formatStats(walletViewIndex));
             await answerCallbackQuery(callback.id, "Stats");
-          } else if (action === "wallet_menu") {
-            await sendPanel(callbackChatId, "menu", formatWalletMenu(walletViewIndex));
-            await answerCallbackQuery(callback.id, "Wallets");
           } else if (action === "wallet_prev") {
             const wallets = readWallets();
             if (!wallets.length) {
@@ -808,6 +776,14 @@ async function pollLoop() {
           } else if (action === "wallet_status") {
             await sendPanel(callbackChatId, "wallet", formatStatus(walletViewIndex));
             await answerCallbackQuery(callback.id, "Wallet");
+          } else if (action === "wallet_select") {
+            if (walletViewIndex === null) {
+              await answerCallbackQuery(callback.id, "No wallet selected");
+              continue;
+            }
+            appendCommand(`wallet_select ${walletViewIndex}`);
+            await sendPanel(callbackChatId, "wallet", formatStatus(walletViewIndex));
+            await answerCallbackQuery(callback.id, `Select wallet ${walletViewIndex}`);
           } else {
             appendCommand(action);
             await answerCallbackQuery(callback.id, `Queued: ${action}`);
