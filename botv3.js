@@ -62,6 +62,7 @@ const DEFAULT_TRAIL_GAP_PCT = 4;
 const DEFAULT_TRAIL_MIN_PROFIT_PCT = 3;
 const DEFAULT_SELL_PNL_LOG = "sell_pnl.log";
 const PRICE_SCALE = 1_000_000_000n;
+const BALANCE_RECALC_THRESHOLD_LAMPORTS = 100000n;
 const LOG_FILE =
   process.env.BOT_LOG_PATH ||
   path.join(
@@ -851,6 +852,9 @@ async function main() {
   if (state.activeWalletIndex === undefined) {
     state.activeWalletIndex = 0;
   }
+  if (state.lastSolBalanceLamports === undefined) {
+    state.lastSolBalanceLamports = null;
+  }
   if (state.paused === undefined) {
     state.paused = false;
   }
@@ -934,6 +938,22 @@ async function main() {
     state.startPriceScaled = null;
     state.sessionStartTs = ts();
     logInfo("STATE reset", { reason });
+  }
+
+  function updateLastSolBalance(lamports) {
+    const prev = state.lastSolBalanceLamports
+      ? BigInt(state.lastSolBalanceLamports)
+      : null;
+    if (
+      !prev ||
+      lamports > prev + BALANCE_RECALC_THRESHOLD_LAMPORTS ||
+      lamports + BALANCE_RECALC_THRESHOLD_LAMPORTS < prev
+    ) {
+      state.lastSolBalanceLamports = lamports.toString();
+      writeState(state);
+      return true;
+    }
+    return false;
   }
 
   function applyCommand(entry) {
@@ -1689,6 +1709,20 @@ async function main() {
       const solBalLamports = BigInt(
         await connection.getBalance(keypair.publicKey, "confirmed")
       );
+      const balanceChanged = updateLastSolBalance(solBalLamports);
+      if (balanceChanged && state.stepIndex === 0) {
+        stepLamports = computeStepLamports(solBalLamports);
+        if (!syncStepDrawdown(stepLamports.length)) {
+          logWarn("Step drawdown invalid after balance update.");
+        } else {
+          logInfo("CONFIG updated from balance", {
+            sol: formatSolFromLamports(solBalLamports),
+            steps: stepLamports
+              .map((lamports) => formatSolFromLamports(lamports))
+              .join(","),
+          });
+        }
+      }
       const startSol = state.startSolBalanceLamports
         ? BigInt(state.startSolBalanceLamports)
         : solBalLamports;
@@ -1756,6 +1790,7 @@ async function main() {
       const solBalLamports = BigInt(
         await connection.getBalance(keypair.publicKey, "confirmed")
       );
+      updateLastSolBalance(solBalLamports);
       const startSol = state.startSolBalanceLamports
         ? BigInt(state.startSolBalanceLamports)
         : solBalLamports;
@@ -1863,6 +1898,7 @@ async function main() {
     const solBalLamports = BigInt(
       await connection.getBalance(keypair.publicKey, "confirmed")
     );
+    updateLastSolBalance(solBalLamports);
     const startSol = state.startSolBalanceLamports
       ? BigInt(state.startSolBalanceLamports)
       : solBalLamports;

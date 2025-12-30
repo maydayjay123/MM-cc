@@ -210,16 +210,24 @@ function formatSol(value) {
 }
 
 function formatTokenAmount(raw, decimals, maxDecimals = 6) {
-  const num = Number(raw);
-  if (!Number.isFinite(num)) return "--";
-  if (!Number.isFinite(decimals) || decimals <= 0) {
-    return num.toFixed(0);
+  if (raw === null || raw === undefined) return "--";
+  let value;
+  try {
+    value = BigInt(raw);
+  } catch {
+    return "--";
   }
-  const factor = 10 ** decimals;
-  const whole = Math.floor(num / factor);
-  const frac = Math.abs(num % factor);
-  const fracStr = frac.toString().padStart(decimals, "0").slice(0, maxDecimals);
-  return `${whole}.${fracStr}`;
+  if (!Number.isFinite(decimals) || decimals <= 0) {
+    return value.toString();
+  }
+  const factor = 10n ** BigInt(decimals);
+  const whole = value / factor;
+  const frac = value % factor;
+  const fracStr = frac
+    .toString()
+    .padStart(decimals, "0")
+    .slice(0, maxDecimals);
+  return `${whole.toString()}.${fracStr}`;
 }
 
 function lamportsToSol(value) {
@@ -292,7 +300,15 @@ function formatStatus(index) {
   const move = metrics?.move || "--";
   const tradePnl = metrics?.tradePnl || "--";
   const walletPnl = metrics?.walletPnl || "--";
-  const solBal = metrics?.solBal || "--";
+  let solBal =
+    state?.lastSolBalanceLamports !== null &&
+    state?.lastSolBalanceLamports !== undefined
+      ? lamportsToSol(state.lastSolBalanceLamports)
+      : null;
+  if (solBal === null && metrics?.solBal) {
+    const parsed = Number(metrics.solBal);
+    solBal = Number.isFinite(parsed) ? parsed : null;
+  }
   const tradeCount = countTrades(lines);
   const trailStart = Number(process.env.TRAILING_START_PCT || 0);
   const trailGap = Number(process.env.TRAILING_GAP_PCT || 0);
@@ -412,16 +428,28 @@ function formatWalletCard(index) {
       ? state.activeWalletIndex
       : index ?? "--";
   const walletPubkey = state?.activeWalletPubkey || "--";
-  const solBal = metrics?.solBal || "--";
+  const solBal =
+    state?.lastSolBalanceLamports !== null &&
+    state?.lastSolBalanceLamports !== undefined
+      ? lamportsToSol(state.lastSolBalanceLamports)
+      : null;
   const tokenRaw = state?.totalTokenAmount || "0";
   const tokenDecimals = state?.tokenDecimals ?? null;
   const tokenMint = state?.tokenMint || "--";
+  const activeFlag =
+    typeof state?.activeWalletIndex === "number" &&
+    state.activeWalletIndex === index
+      ? "ACTIVE"
+      : "INACTIVE";
 
   const header = "<b>Wallet</b>";
   const body = [
     `Index: <b>${walletIndex}</b>`,
     `Address: <code>${escapeHtml(walletPubkey)}</code>`,
-    `SOL balance: <b>${formatSol(solBal)}</b>`,
+    `Status: <b>${activeFlag}</b>`,
+    "",
+    "<b>Balances</b>",
+    `SOL: <b>${solBal !== null ? solBal.toFixed(6) : "--"}</b>`,
     `Token (${escapeHtml(tokenMint)}): <b>${formatTokenAmount(
       tokenRaw,
       tokenDecimals
