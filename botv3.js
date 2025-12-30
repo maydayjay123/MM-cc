@@ -63,6 +63,8 @@ const DEFAULT_TRAIL_MIN_PROFIT_PCT = 3;
 const DEFAULT_SELL_PNL_LOG = "sell_pnl.log";
 const PRICE_SCALE = 1_000_000_000n;
 const BALANCE_RECALC_THRESHOLD_LAMPORTS = 100000n;
+const BACKOFF_BASE_MS = 5000;
+const BACKOFF_MAX_MS = 60000;
 const LOG_FILE =
   process.env.BOT_LOG_PATH ||
   path.join(
@@ -341,6 +343,15 @@ function buildRpcUrls() {
 function isRateLimitError(err) {
   const message = String(err?.message || err || "");
   return message.includes("429") || message.includes("Too Many Requests");
+}
+
+function shouldBackoff(err) {
+  const message = String(err?.message || err || "");
+  return (
+    isRateLimitError(err) ||
+    message.includes("Quote failed") ||
+    message.includes("Quote fetch failed")
+  );
 }
 
 console.log = (...args) => {
@@ -1555,8 +1566,14 @@ async function main() {
     return true;
   }
 
+  let backoffMs = 0;
   while (true) {
     try {
+    if (backoffMs > 0) {
+      logWarn("BACKOFF sleep", { ms: backoffMs });
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      backoffMs = 0;
+    }
     const commandRead = readCommandEntries(state.lastCommandLine);
     let forceBuy = false;
     let forceSell = false;
@@ -2003,6 +2020,12 @@ async function main() {
           from: prev,
           to: rpcUrls[rpcIndex],
         });
+      }
+      if (shouldBackoff(err)) {
+        backoffMs = Math.min(
+          backoffMs ? backoffMs * 2 : BACKOFF_BASE_MS,
+          BACKOFF_MAX_MS
+        );
       }
       logError("Loop error", { error: errorMsg });
       await new Promise((resolve) => setTimeout(resolve, pollMs));
