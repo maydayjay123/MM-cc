@@ -13,6 +13,17 @@ const LOG_PATH =
   path.join(__dirname, "botv3.log");
 const COMMANDS_PATH =
   process.env.TG_COMMANDS_PATH || path.join(__dirname, "tg_commands.jsonl");
+const WALLETS_FILE =
+  process.env.WALLETS_FILE || path.join(__dirname, "wallets.json");
+const STATE_TEMPLATE =
+  process.env.BOTV3_STATE_TEMPLATE ||
+  path.join(__dirname, "botv3_state_{index}.json");
+const LOG_TEMPLATE =
+  process.env.BOTV3_LOG_TEMPLATE ||
+  path.join(__dirname, "botv3_{index}.log");
+const COMMANDS_TEMPLATE =
+  process.env.TG_COMMANDS_TEMPLATE ||
+  path.join(__dirname, "tg_commands_{index}.jsonl");
 const ALERT_STATE_PATH =
   process.env.TG_ALERT_STATE_PATH || path.join(__dirname, "tg_alert.json");
 
@@ -27,6 +38,14 @@ if (!BOT_TOKEN || !CHAT_ID) {
 
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 let updateOffset = 0;
+let walletViewIndex = null;
+const lastPanelMessageIds = {
+  status: null,
+  lab: null,
+  stats: null,
+  wallet: null,
+  menu: null,
+};
 let alertConfig = {
   movePct: DEFAULT_ALERT_MOVE_PCT,
   windowSec: DEFAULT_ALERT_WINDOW_SEC,
@@ -58,10 +77,11 @@ function writeAlertConfig() {
   }
 }
 
-function readState() {
+function readState(customPath) {
   try {
-    if (!fs.existsSync(STATE_PATH)) return null;
-    const raw = fs.readFileSync(STATE_PATH, "utf8");
+    const target = customPath || STATE_PATH;
+    if (!fs.existsSync(target)) return null;
+    const raw = fs.readFileSync(target, "utf8");
     if (!raw.trim()) return null;
     return JSON.parse(raw);
   } catch {
@@ -69,13 +89,45 @@ function readState() {
   }
 }
 
-function readLogLines() {
+function readLogLines(customPath) {
   try {
-    if (!fs.existsSync(LOG_PATH)) return [];
-    return fs.readFileSync(LOG_PATH, "utf8").split(/\r?\n/).filter(Boolean);
+    const target = customPath || LOG_PATH;
+    if (!fs.existsSync(target)) return [];
+    return fs.readFileSync(target, "utf8").split(/\r?\n/).filter(Boolean);
   } catch {
     return [];
   }
+}
+
+function readWallets() {
+  try {
+    if (!fs.existsSync(WALLETS_FILE)) return [];
+    const raw = fs.readFileSync(WALLETS_FILE, "utf8");
+    if (!raw.trim()) return [];
+    const data = JSON.parse(raw);
+    return Array.isArray(data.wallets) ? data.wallets : [];
+  } catch {
+    return [];
+  }
+}
+
+function fillTemplate(template, index) {
+  return template.replace("{index}", String(index));
+}
+
+function getPathsForIndex(index) {
+  if (index === null || index === undefined) {
+    return {
+      statePath: STATE_PATH,
+      logPath: LOG_PATH,
+      commandsPath: COMMANDS_PATH,
+    };
+  }
+  return {
+    statePath: fillTemplate(STATE_TEMPLATE, index),
+    logPath: fillTemplate(LOG_TEMPLATE, index),
+    commandsPath: fillTemplate(COMMANDS_TEMPLATE, index),
+  };
 }
 
 function parseTableRow(line) {
@@ -211,9 +263,10 @@ function formatStepPlan() {
   return "--";
 }
 
-function formatStatus() {
-  const state = readState();
-  const lines = readLogLines();
+function formatStatus(index) {
+  const paths = getPathsForIndex(index);
+  const state = readState(paths.statePath);
+  const lines = readLogLines(paths.logPath);
   const metrics = findLatestMetrics(lines);
   const lastTradePnl = findLastTradePnl(lines);
 
@@ -285,6 +338,12 @@ function formatStatus() {
       ? `${sessionPct.toFixed(2)}%`
       : "--";
 
+  const stepPlan =
+    Array.isArray(state?.settings?.stepSizePct) &&
+    state.settings.stepSizePct.length
+      ? state.settings.stepSizePct.map((v) => `${v}%`).join(",")
+      : formatStepPlan();
+
   const sheetLines = [
     "MM PROFIT :: STATUS",
     "--------------------",
@@ -292,7 +351,8 @@ function formatStatus() {
     `STEP     : ${step}   TRADES: ${tradeCount}`,
     `TOKEN    : ${tokenShort}`,
     `WALLET   : ${walletIndex} ${walletShort}`,
-    `STEPS    : ${formatStepPlan()}`,
+    `ADDRESS  : ${walletPubkey}`,
+    `STEPS    : ${stepPlan}`,
     "",
     `AVG      : ${avgShort}`,
     `PX       : ${pxShort}`,
@@ -327,8 +387,9 @@ function formatStatus() {
   return `<pre>${escapeHtml(boxed)}</pre>`;
 }
 
-function formatLab() {
-  const state = readState();
+function formatLab(index) {
+  const paths = getPathsForIndex(index);
+  const state = readState(paths.statePath);
   const settings = state?.settings || {};
   const token = state?.tokenMint || "--";
   const walletUsePct =
@@ -376,8 +437,9 @@ function formatLab() {
   return `<pre>${escapeHtml([border, ...boxLines, border].join("\n"))}</pre>`;
 }
 
-function formatStats() {
-  const state = readState();
+function formatStats(index) {
+  const paths = getPathsForIndex(index);
+  const state = readState(paths.statePath);
   const stats = state?.stats || {};
   const realized = lamportsToSol(stats.realizedPnlLamports);
   const spent = lamportsToSol(stats.totalSolSpentLamports);
@@ -413,13 +475,51 @@ function formatStats() {
   return `<pre>${escapeHtml([border, ...boxLines, border].join("\n"))}</pre>`;
 }
 
+function getWalletBalanceLine(index) {
+  const paths = getPathsForIndex(index);
+  const lines = readLogLines(paths.logPath);
+  const metrics = findLatestMetrics(lines);
+  const sol = metrics?.solBal ? formatSol(metrics.solBal) : "--";
+  return sol;
+}
+
+function formatWalletMenu(index) {
+  const wallets = readWallets();
+  if (!wallets.length) {
+    return `<pre>${escapeHtml("No wallets found.")}</pre>`;
+  }
+  const lines = ["MM PROFIT :: WALLETS", "-------------------"];
+  wallets.forEach((wallet, idx) => {
+    const short =
+      wallet.publicKey.length > 16
+        ? `${wallet.publicKey.slice(0, 6)}...${wallet.publicKey.slice(-6)}`
+        : wallet.publicKey;
+    const sol = getWalletBalanceLine(idx);
+    const active = idx === index ? "*" : " ";
+    lines.push(`${active} ${idx}: ${short} | ${sol} SOL`);
+  });
+  lines.push("");
+  lines.push("Use Wallet Prev/Next to switch.");
+
+  const innerPad = 1;
+  const baseWidth = Math.max(...lines.map((line) => line.length));
+  const totalWidth = baseWidth + innerPad * 2;
+  const border = `+${"-".repeat(totalWidth + 2)}+`;
+  const boxLines = lines.map((line) => {
+    const content = " ".repeat(innerPad) + line.padEnd(baseWidth) + " ".repeat(innerPad);
+    return `| ${content} |`;
+  });
+  return `<pre>${escapeHtml([border, ...boxLines, border].join("\n"))}</pre>`;
+}
+
 function appendCommand(action) {
   const payload = {
     ts: new Date().toISOString(),
     action,
   };
   try {
-    fs.appendFileSync(COMMANDS_PATH, `${JSON.stringify(payload)}\n`, "utf8");
+    const paths = getPathsForIndex(walletViewIndex);
+    fs.appendFileSync(paths.commandsPath, `${JSON.stringify(payload)}\n`, "utf8");
   } catch (err) {
     console.error("Failed to write command:", err.message || err);
   }
@@ -452,6 +552,14 @@ async function sendMessage(text) {
             { text: "Lab", callback_data: "lab_status" },
             { text: "Stats", callback_data: "stats_status" },
           ],
+          [
+            { text: "Wallet Prev", callback_data: "wallet_prev" },
+            { text: "Wallet Next", callback_data: "wallet_next" },
+          ],
+          [
+            { text: "Wallet Card", callback_data: "wallet_status" },
+            { text: "Wallets", callback_data: "wallet_menu" },
+          ],
         ],
       },
     }),
@@ -460,6 +568,8 @@ async function sendMessage(text) {
     const body = await res.text();
     throw new Error(`sendMessage failed: ${res.status} ${body}`);
   }
+  const data = await res.json();
+  return data?.result?.message_id || null;
 }
 
 async function sendAlert(text) {
@@ -476,6 +586,34 @@ async function sendAlert(text) {
     const body = await res.text();
     throw new Error(`sendMessage failed: ${res.status} ${body}`);
   }
+}
+
+async function deleteMessage(chatId, messageId) {
+  if (!chatId || !messageId) return;
+  const res = await fetch(`${API_BASE}/deleteMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`deleteMessage failed: ${res.status} ${body}`);
+  }
+}
+
+async function sendPanel(chatId, key, text) {
+  const prevId = lastPanelMessageIds[key];
+  if (prevId) {
+    await deleteMessage(chatId, prevId).catch(() => {});
+  }
+  const msgId = await sendMessage(text);
+  if (msgId) {
+    lastPanelMessageIds[key] = msgId;
+  }
+  return msgId;
 }
 
 async function getUpdates() {
@@ -553,18 +691,56 @@ async function pollLoop() {
 
       if (message) {
         if (chatId !== String(CHAT_ID)) continue;
+        if (walletViewIndex === null) {
+          const currentState = readState();
+          if (typeof currentState?.activeWalletIndex === "number") {
+            walletViewIndex = currentState.activeWalletIndex;
+          } else {
+            walletViewIndex = 0;
+          }
+        }
         if (message.startsWith("/status")) {
-          await sendMessage(formatStatus());
+          await sendPanel(chatId, "status", formatStatus(walletViewIndex));
+          if (update.message?.message_id) {
+            deleteMessage(chatId, update.message.message_id).catch(() => {});
+          }
         } else if (message.startsWith("/lab")) {
-          await sendMessage(formatLab());
+          await sendPanel(chatId, "lab", formatLab(walletViewIndex));
+          if (update.message?.message_id) {
+            deleteMessage(chatId, update.message.message_id).catch(() => {});
+          }
         } else if (message.startsWith("/stats")) {
-          await sendMessage(formatStats());
+          await sendPanel(chatId, "stats", formatStats(walletViewIndex));
+          if (update.message?.message_id) {
+            deleteMessage(chatId, update.message.message_id).catch(() => {});
+          }
+        } else if (message.startsWith("/wallets")) {
+          await sendPanel(chatId, "menu", formatWalletMenu(walletViewIndex));
+          if (update.message?.message_id) {
+            deleteMessage(chatId, update.message.message_id).catch(() => {});
+          }
         } else if (/^\/(minTP|walletUSE|setDEGEN|buyDUMP|stepSIZE|step|setCA)\b/i.test(message)) {
           const cleaned = message.replace(/^\//, "");
-          await sendMessage(queueCommand(cleaned));
+          const msgId = await sendMessage(queueCommand(cleaned));
+          if (msgId) {
+            setTimeout(() => {
+              deleteMessage(chatId, msgId).catch(() => {});
+            }, 4000);
+          }
+          if (update.message?.message_id) {
+            deleteMessage(chatId, update.message.message_id).catch(() => {});
+          }
         } else if (/^\/(forcebuy|forcesell)\b/i.test(message)) {
           const cleaned = message.replace(/^\//, "");
-          await sendMessage(queueCommand(cleaned));
+          const msgId = await sendMessage(queueCommand(cleaned));
+          if (msgId) {
+            setTimeout(() => {
+              deleteMessage(chatId, msgId).catch(() => {});
+            }, 4000);
+          }
+          if (update.message?.message_id) {
+            deleteMessage(chatId, update.message.message_id).catch(() => {});
+          }
         } else if (/^\/setalert\b/.test(message) || /^\/setalert\b/.test(message)) {
           const parts = message.trim().split(/\s+/);
           const pct = Number(parts[1]);
@@ -597,11 +773,41 @@ async function pollLoop() {
         const action = callback.data;
         if (action) {
           if (action === "lab_status") {
-            await sendMessage(formatLab());
+            await sendPanel(callbackChatId, "lab", formatLab(walletViewIndex));
             await answerCallbackQuery(callback.id, "Lab");
           } else if (action === "stats_status") {
-            await sendMessage(formatStats());
+            await sendPanel(callbackChatId, "stats", formatStats(walletViewIndex));
             await answerCallbackQuery(callback.id, "Stats");
+          } else if (action === "wallet_menu") {
+            await sendPanel(callbackChatId, "menu", formatWalletMenu(walletViewIndex));
+            await answerCallbackQuery(callback.id, "Wallets");
+          } else if (action === "wallet_prev") {
+            const wallets = readWallets();
+            if (!wallets.length) {
+              await answerCallbackQuery(callback.id, "No wallets");
+              continue;
+            }
+            walletViewIndex =
+              walletViewIndex === null
+                ? 0
+                : (walletViewIndex - 1 + wallets.length) % wallets.length;
+            await sendPanel(callbackChatId, "wallet", formatStatus(walletViewIndex));
+            await answerCallbackQuery(callback.id, `Wallet ${walletViewIndex}`);
+          } else if (action === "wallet_next") {
+            const wallets = readWallets();
+            if (!wallets.length) {
+              await answerCallbackQuery(callback.id, "No wallets");
+              continue;
+            }
+            walletViewIndex =
+              walletViewIndex === null
+                ? 0
+                : (walletViewIndex + 1) % wallets.length;
+            await sendPanel(callbackChatId, "wallet", formatStatus(walletViewIndex));
+            await answerCallbackQuery(callback.id, `Wallet ${walletViewIndex}`);
+          } else if (action === "wallet_status") {
+            await sendPanel(callbackChatId, "wallet", formatStatus(walletViewIndex));
+            await answerCallbackQuery(callback.id, "Wallet");
           } else {
             appendCommand(action);
             await answerCallbackQuery(callback.id, `Queued: ${action}`);
