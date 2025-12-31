@@ -556,9 +556,11 @@ async function main() {
           }
         }
         state.stats.lastSweepTs = new Date().toISOString();
+        state.running = false;
         state.sweep = false;
         writeState(state);
         logInfo("SWEEP complete");
+        logInfo("SWEEP stopped bot");
         await new Promise((resolve) => setTimeout(resolve, pollMs));
         continue;
       }
