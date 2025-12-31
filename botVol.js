@@ -418,7 +418,7 @@ async function main() {
     writeState(state);
     logInfo("Target mint updated from env", { mint: state.targetMint });
   }
-  const wallets = ensureWallets(state);
+  let wallets = ensureWallets(state);
   const parentKeypair = Keypair.fromSecretKey(
     Uint8Array.from(wallets.parent.secretKey)
   );
@@ -439,6 +439,7 @@ async function main() {
 
       const commandRead = readCommands(state.lastCommandLine);
       if (commandRead.entries.length) {
+        let walletConfigChanged = false;
         for (const entry of commandRead.entries) {
           const cmd = parseCommand(entry);
           if (cmd.name === "vol_start") {
@@ -451,12 +452,14 @@ async function main() {
             const count = Number(cmd.args[0]);
             if (Number.isFinite(count) && count > 0) {
               state.volWalletCount = Math.floor(count);
+              walletConfigChanged = true;
               logInfo("CMD vol_set_vol", { count: state.volWalletCount });
             }
           } else if (cmd.name === "vol_set_mm") {
             const count = Number(cmd.args[0]);
             if (Number.isFinite(count) && count > 0) {
               state.mmWalletCount = Math.floor(count);
+              walletConfigChanged = true;
               logInfo("CMD vol_set_mm", { count: state.mmWalletCount });
             }
           } else if (cmd.name === "vol_set_reserve") {
@@ -472,6 +475,13 @@ async function main() {
         }
         state.lastCommandLine = commandRead.nextIndex;
         writeState(state);
+        if (walletConfigChanged) {
+          wallets = ensureWallets(state);
+          logInfo("Wallets refreshed", {
+            volWallets: wallets.volWallets.length,
+            mmWallets: wallets.mmWallets.length,
+          });
+        }
       }
 
       if (!state.running) {
