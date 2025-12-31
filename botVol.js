@@ -402,6 +402,11 @@ async function main() {
   let connection = new Connection(rpcUrls[rpcIndex], "confirmed");
 
   let state = ensureState();
+  if (VOL_TARGET_MINT && state.targetMint !== VOL_TARGET_MINT) {
+    state.targetMint = VOL_TARGET_MINT;
+    writeState(state);
+    logInfo("Target mint updated from env", { mint: state.targetMint });
+  }
   const wallets = ensureWallets(state);
   const parentKeypair = Keypair.fromSecretKey(
     Uint8Array.from(wallets.parent.secretKey)
