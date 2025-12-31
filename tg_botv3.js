@@ -529,6 +529,7 @@ function formatVolPanel() {
     "",
     "Set vol: /setvol 2",
     "Set mm: /setmm 1",
+    "Set reserve: /setreserve 0.02",
   ];
   return `${header}\n${body.join("\n")}`;
 }
@@ -682,6 +683,9 @@ function buildKeyboard(type) {
         [
           { text: "Stats", callback_data: "vol_stats" },
           { text: "Sweep", callback_data: "vol_sweep" },
+        ],
+        [
+          { text: "Set Reserve", callback_data: "vol_set_reserve" },
         ],
         [
           { text: "Back", callback_data: "vol_back" },
@@ -929,6 +933,15 @@ async function pollLoop() {
           if (update.message?.message_id) {
             deleteMessage(chatId, update.message.message_id).catch(() => {});
           }
+        } else if (/^\/setreserve\b/i.test(message)) {
+          const parts = message.trim().split(/\s+/);
+          if (parts[1]) {
+            appendVolCommand(`vol_set_reserve ${parts[1]}`);
+          }
+          await sendOrEditPanel(chatId, formatVolPanel(), "vol");
+          if (update.message?.message_id) {
+            deleteMessage(chatId, update.message.message_id).catch(() => {});
+          }
         } else if (/^\/(minTP|walletUSE|setDEGEN|buyDUMP|stepSIZE|step|setCA)\b/i.test(message)) {
           const cleaned = message.replace(/^\//, "");
           appendCommand(cleaned);
@@ -1115,6 +1128,13 @@ async function pollLoop() {
               "vol"
             );
             await answerCallbackQuery(callback.id, "Use /setmm <n>");
+          } else if (action === "vol_set_reserve") {
+            await sendOrEditPanel(
+              callbackChatId,
+              formatVolPanel(),
+              "vol"
+            );
+            await answerCallbackQuery(callback.id, "Use /setreserve <sol>");
           } else if (action === "vol_stats") {
             await sendOrEditPanel(
               callbackChatId,

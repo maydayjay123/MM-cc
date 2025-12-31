@@ -449,6 +449,12 @@ async function main() {
               state.mmWalletCount = Math.floor(count);
               logInfo("CMD vol_set_mm", { count: state.mmWalletCount });
             }
+          } else if (cmd.name === "vol_set_reserve") {
+            const reserve = Number(cmd.args[0]);
+            if (Number.isFinite(reserve) && reserve >= 0) {
+              state.reserveSol = reserve;
+              logInfo("CMD vol_set_reserve", { sol: reserve });
+            }
           } else if (cmd.name === "vol_sweep") {
             state.sweep = true;
             logInfo("CMD vol_sweep");
