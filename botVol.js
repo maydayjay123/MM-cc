@@ -41,6 +41,9 @@ const DEFAULT_SELL_CHUNKS = 2;
 const DEFAULT_VOL_USE_PCT = 90;
 const DEFAULT_BUY_DELAY_MS = 1000;
 const DEFAULT_SLIPPAGE_BPS = 100;
+const SWEEP_MAX_RETRIES = 3;
+const SWEEP_RETRY_DELAY_MS = 2000;
+const SWEEP_KEEP_LAMPORTS = 5000n;
 
 const BALANCE_THRESHOLD_LAMPORTS = 100000n;
 
@@ -478,16 +481,19 @@ async function main() {
       if (state.sweep) {
         logInfo("SWEEP start");
         const volWallets = wallets.volWallets.slice(0, state.volWalletCount);
-        for (const wallet of volWallets) {
+        const mmWallets = wallets.mmWallets.slice(0, state.mmWalletCount);
+        const sweepWallets = volWallets.concat(mmWallets);
+        for (const wallet of sweepWallets) {
           const keypair = Keypair.fromSecretKey(
             Uint8Array.from(wallet.secretKey)
           );
-          const tokenBal = await getTokenBalance(
+          let tokenBal = await getTokenBalance(
             connection,
             keypair.publicKey,
             mintPubkey
           );
-          if (tokenBal.amount > 0n) {
+          let attempts = 0;
+          while (tokenBal.amount > 0n && attempts < SWEEP_MAX_RETRIES) {
             const quote = await fetchQuote(
               state.targetMint,
               SOL_MINT,
@@ -501,14 +507,34 @@ async function main() {
               outAmount: quote.outAmount,
             });
             const sig = await executeSwap(connection, keypair, quote);
-            logInfo("Sweep sell", { wallet: wallet.publicKey, sig });
+            logInfo("Sweep sell", {
+              wallet: wallet.publicKey,
+              sig,
+              attempt: attempts + 1,
+            });
+            await new Promise((resolve) =>
+              setTimeout(resolve, SWEEP_RETRY_DELAY_MS)
+            );
+            tokenBal = await getTokenBalance(
+              connection,
+              keypair.publicKey,
+              mintPubkey
+            );
+            attempts += 1;
           }
+          if (tokenBal.amount > 0n) {
+            logWarn("Sweep sell incomplete", {
+              wallet: wallet.publicKey,
+              remaining: tokenBal.amount.toString(),
+            });
+            continue;
+          }
+
           const solBal = BigInt(
             await connection.getBalance(keypair.publicKey, "confirmed")
           );
-          const reserve = lamportsFromSol(state.reserveSol);
-          if (solBal > reserve + BALANCE_THRESHOLD_LAMPORTS) {
-            const delta = solBal - reserve;
+          if (solBal > SWEEP_KEEP_LAMPORTS + BALANCE_THRESHOLD_LAMPORTS) {
+            const delta = solBal - SWEEP_KEEP_LAMPORTS;
             const sig = await transferSol(
               connection,
               keypair,
