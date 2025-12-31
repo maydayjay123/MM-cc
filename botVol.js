@@ -183,7 +183,14 @@ function readCommands(lastIndex) {
     return { entries: [], nextIndex: lastIndex };
   }
   const lines = raw.split(/\r?\n/).filter(Boolean);
-  const start = Number.isFinite(lastIndex) ? lastIndex : 0;
+  let start = Number.isFinite(lastIndex) ? lastIndex : 0;
+  if (start > lines.length) {
+    logWarn("Command index reset", {
+      lastIndex: start,
+      lines: lines.length,
+    });
+    start = 0;
+  }
   const entries = [];
   for (let i = start; i < lines.length; i += 1) {
     try {
