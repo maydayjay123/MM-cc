@@ -562,9 +562,9 @@ function formatTradePanel(index) {
     )}</b>`,
     "",
     "<b>Commands</b>",
-    "Buy: /buy <sol> [maxPrice]",
-    "Sell: /sell <pct> [minPrice]",
-    "Sell all: /sellall",
+    "Buy: <code>/buy &lt;sol&gt; [maxPrice]</code>",
+    "Sell: <code>/sell &lt;pct&gt; [minPrice]</code>",
+    "Sell all: <code>/sellall</code>",
   ];
   if (pendingTrade) {
     body.push(
