@@ -890,6 +890,9 @@ async function main() {
   if (state.trailPeakBps === undefined) {
     state.trailPeakBps = null;
   }
+  if (state.lastPriceScaled === undefined) {
+    state.lastPriceScaled = null;
+  }
   if (state.activeWalletIndex === undefined) {
     state.activeWalletIndex = 0;
   }
@@ -998,6 +1001,44 @@ async function main() {
       return true;
     }
     return false;
+  }
+
+  function updateSnapshot(solBalLamports) {
+    const mode = state.mode === "in_position" ? "POS" : "WAIT";
+    const step =
+      mode === "POS" ? `${state.stepIndex}/${stepLamports.length}` : "-";
+    const tokenAmount = BigInt(state.totalTokenAmount || "0");
+    const totalSolSpent = BigInt(state.totalSolSpentLamports || "0");
+    let posSolLamports = 0n;
+    if (state.lastPriceScaled && tokenAmount > 0n) {
+      posSolLamports =
+        (tokenAmount * BigInt(state.lastPriceScaled)) / PRICE_SCALE;
+    }
+    const tradePnlLamports =
+      posSolLamports > 0n ? posSolLamports - totalSolSpent : 0n;
+    const startSol = state.startSolBalanceLamports
+      ? BigInt(state.startSolBalanceLamports)
+      : solBalLamports;
+    const walletValue = solBalLamports + posSolLamports;
+    const walletPnl = walletValue - startSol;
+    const stepPct =
+      mode === "POS" && state.stepIndex < stepLamports.length
+        ? `${state.settings.stepDrawdownPct[state.stepIndex].toFixed(2)}%`
+        : "--";
+    state.lastMetrics = {
+      time: ts(),
+      mode,
+      step,
+      avg: "--",
+      px: "--",
+      move: "--",
+      stepPct,
+      posSol: formatSolFromLamports(posSolLamports),
+      tradePnl: formatSolFromLamports(tradePnlLamports),
+      walletPnl: formatSolFromLamports(walletPnl),
+      solBal: formatSolFromLamports(solBalLamports),
+    };
+    writeState(state);
   }
 
   function applyCommand(entry) {
@@ -1263,7 +1304,10 @@ async function main() {
     if (outAmountRaw === 0n) {
       throw new Error("Price quote returned 0 output");
     }
-    return (sampleLamports * PRICE_SCALE) / outAmountRaw;
+    const current = (sampleLamports * PRICE_SCALE) / outAmountRaw;
+    state.lastPriceScaled = current.toString();
+    writeState(state);
+    return current;
   }
 
   async function doBuy(stepIndex, fromEntry = false, options = {}) {
@@ -1674,6 +1718,7 @@ async function main() {
         );
         updateLastSolBalance(BigInt(solBalLamports));
         await refreshTokenAmount();
+        updateSnapshot(BigInt(solBalLamports));
         state.lastBalanceRefreshTs = Date.now();
         writeState(state);
       } catch (err) {
@@ -1749,6 +1794,8 @@ async function main() {
       }
 
       const currentPriceScaled = (sampleLamports * PRICE_SCALE) / outAmountRaw;
+      state.lastPriceScaled = currentPriceScaled.toString();
+      writeState(state);
       if (!state.startPriceScaled) {
         state.startPriceScaled = currentPriceScaled.toString();
         writeState(state);
@@ -1902,6 +1949,8 @@ async function main() {
     }
 
     const currentPriceScaled = (sampleLamports * PRICE_SCALE) / outAmountRaw;
+    state.lastPriceScaled = currentPriceScaled.toString();
+    writeState(state);
     if (!state.startPriceScaled) {
       state.startPriceScaled = currentPriceScaled.toString();
       writeState(state);
