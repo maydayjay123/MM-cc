@@ -1718,6 +1718,16 @@ async function main() {
         );
         updateLastSolBalance(BigInt(solBalLamports));
         const refreshedTokens = await refreshTokenAmount();
+        if (
+          refreshedTokens > 0n &&
+          (!state.lastPriceScaled || state.lastPriceScaled === "0")
+        ) {
+          try {
+            await getCurrentPriceScaled();
+          } catch (err) {
+            logWarn("Price refresh failed", { error: err.message || err });
+          }
+        }
         if (refreshedTokens > 0n || BigInt(state.totalSolSpentLamports || "0") > 0n) {
           if (state.mode !== "in_position") {
             state.mode = "in_position";
